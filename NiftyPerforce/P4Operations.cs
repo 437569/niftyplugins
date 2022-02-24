@@ -63,6 +63,11 @@ namespace NiftyPerforce
             }
         }
 
+        private static string EscapeP4Path(string filePath)
+        {
+            return filePath.Replace("%", "%25").Replace("#", "%23").Replace("@", "%40");
+        }
+
         private static string FormatToken(string operation, string filename)
         {
             string token = operation + " " + Path.GetFullPath(filename).ToLowerInvariant();
@@ -84,7 +89,7 @@ namespace NiftyPerforce
             string token = FormatToken("delete", filename);
             if (!LockOp(token))
                 return false;
-            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "delete \"" + filename + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
+            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "delete \"" + EscapeP4Path(filename) + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
         }
 
         public static bool AddFile(string filename)
@@ -101,7 +106,7 @@ namespace NiftyPerforce
             if (!LockOp(token))
                 return false;
 
-            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "add \"" + filename + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
+            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "add -f \"" + filename + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
         }
 
         public static bool EditFile(string filename, bool force)
@@ -187,9 +192,9 @@ namespace NiftyPerforce
                 return false;
 
             if (immediate)
-                return AsyncProcess.Run("p4.exe", GetUserInfoString() + "edit \"" + filename + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
+                return AsyncProcess.Run("p4.exe", GetUserInfoString() + "edit \"" + EscapeP4Path(filename) + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
 
-            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "edit \"" + filename + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
+            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "edit \"" + EscapeP4Path(filename) + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
         }
 
         public static bool RevertFile(string filename, bool onlyUnchanged)
@@ -204,7 +209,7 @@ namespace NiftyPerforce
                 return false;
 
             string revertArguments = onlyUnchanged ? "-a " : string.Empty;
-            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "revert " + revertArguments + "\"" + filename + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
+            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + "revert " + revertArguments + "\"" + EscapeP4Path(filename) + "\"", Path.GetDirectoryName(filename), new AsyncProcess.OnDone(UnlockOp), token);
         }
 
         public static bool DiffFile(string filename)
