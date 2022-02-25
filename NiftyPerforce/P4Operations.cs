@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2006-2010 Jim Tilander. See COPYING for and README for more details.
+// Copyright (C) 2006-2010 Jim Tilander. See COPYING for and README for more details.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -63,9 +63,14 @@ namespace NiftyPerforce
             }
         }
 
-        private static string EscapeP4Path(string filePath)
+        private static string EscapeP4Path(string filename)
         {
-            return filePath.Replace("%", "%25").Replace("#", "%23").Replace("@", "%40");
+            return filename.Replace("%", "%25").Replace("#", "%23").Replace("@", "%40");
+        }
+
+        private static string UnEscapeP4Path(string escapedfilename)
+        {
+            return escapedfilename.Replace("%40", "@").Replace("%23", "#").Replace("%25", "%");
         }
 
         private static string FormatToken(string operation, string filename)
@@ -228,13 +233,13 @@ namespace NiftyPerforce
 
             // Let's figure out if the user has some custom diff tool installed. Then we just send whatever we have without any fancy options.
             if (g_p4customdiff)
-                return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + " diff \"" + filename + "#have\"", dirname, new AsyncProcess.OnDone(UnlockOp), token);
+                return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + " diff \"" + EscapeP4Path(filename) + "#have\"", dirname, new AsyncProcess.OnDone(UnlockOp), token);
 
             if (g_p4vc_diffhave_supported)
-                return AsyncProcess.Schedule(g_p4vc_exename, GetUserInfoStringFull(true, dirname) + " diffhave \"" + filename + "\"", dirname, new AsyncProcess.OnDone(UnlockOp), token, 0);
+                return AsyncProcess.Schedule(g_p4vc_exename, GetUserInfoString() + " diffhave \"" + filename + "\"", dirname, new AsyncProcess.OnDone(UnlockOp), token, 0);
 
             // Otherwise let's show a unified diff in the outputpane.
-            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + " diff -du \"" + filename + "#have\"", dirname, new AsyncProcess.OnDone(UnlockOp), token);
+            return AsyncProcess.Schedule("p4.exe", GetUserInfoString() + " diff -du \"" + EscapeP4Path(filename) + "#have\"", dirname, new AsyncProcess.OnDone(UnlockOp), token);
         }
 
         public static bool RevisionHistoryFile(string dirname, string filename)
@@ -249,10 +254,10 @@ namespace NiftyPerforce
                     return false;
 
                 if (g_p4vc_history_supported)
-                    return AsyncProcess.Schedule(g_p4vc_exename, GetUserInfoStringFull(true, dirname) + " history \"" + filename + "\"", dirname, new AsyncProcess.OnDone(UnlockOp), token, 0);
+                    return AsyncProcess.Schedule(g_p4vc_exename, GetUserInfoString() + " history \"" + filename + "\"", dirname, new AsyncProcess.OnDone(UnlockOp), token, 0);
 
                 if (g_p4vinstalled)
-                    return AsyncProcess.Schedule("p4v.exe", " -win 0 " + GetUserInfoStringFull(true, dirname) + " -cmd \"history " + filename + "\"", dirname, new AsyncProcess.OnDone(UnlockOp), token, 0);
+                    return AsyncProcess.Schedule("p4v.exe", " -win 0 " + GetUserInfoStringFull(true, dirname) + " -cmd \"history " + EscapeP4Path(filename) + "\"", dirname, new AsyncProcess.OnDone(UnlockOp), token, 0);
             }
 
             return NotifyUser("could not find a supported p4vc.exe or p4v.exe installed in perforce directory");
@@ -285,21 +290,45 @@ namespace NiftyPerforce
                         var userpattern = new Regex(@"User name: (?<user>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
                         var portpattern = new Regex(@"Server address: (?<port>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
                         var brokerpattern = new Regex(@"Broker address: (?<port>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
+                        var proxypattern = new Regex(@"Proxy address: (?<port>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
                         var clientpattern = new Regex(@"Client name: (?<client>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
 
                         Match usermatch = userpattern.Match(output);
                         Match portmatch = portpattern.Match(output);
                         Match brokermatch = brokerpattern.Match(output);
+                        Match proxymatch = proxypattern.Match(output);
                         Match clientmatch = clientpattern.Match(output);
 
                         string port = portmatch.Groups["port"].Value.Trim();
-                        string broker = brokermatch.Groups["port"].Value.Trim();
+                        string broker = brokermatch.Success ? brokermatch.Groups["port"].Value.Trim() : null;
+                        string proxy = proxymatch.Success ? proxymatch.Groups["port"].Value.Trim() : null;
                         string username = usermatch.Groups["user"].Value.Trim();
                         string client = clientmatch.Groups["client"].Value.Trim();
 
-                        string server = broker;
-                        if (string.IsNullOrEmpty(server))
+                        string server;
+                        Regex encryptionpattern;
+                        if (!string.IsNullOrEmpty(broker))
+                        {
+                            server = broker;
+                            encryptionpattern = new Regex(@"Broker encryption: (?<encrypted>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
+                        }
+                        else if (!string.IsNullOrEmpty(proxy))
+                        {
+                            server = proxy;
+                            encryptionpattern = new Regex(@"Proxy encryption: (?<encrypted>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
+                        }
+                        else
+                        {
                             server = port;
+                            encryptionpattern = new Regex(@"Server encryption: (?<encrypted>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
+                        }
+
+                        Match encryptionmatch = encryptionpattern.Match(output);
+                        bool encrypted = encryptionmatch.Success && encryptionmatch.Groups["encrypted"].Value.Trim() == "encrypted";
+                        if (encrypted)
+                        {
+                            server = $"ssl:{server}";
+                        }
 
                         string ret = $" -p {server} -u {username} -c {client} ";
 
@@ -333,7 +362,7 @@ namespace NiftyPerforce
             if (string.IsNullOrEmpty(g_p4vc_exename))
                 return NotifyUser("could not find p4vc in perforce directory");
 
-            string arguments = GetUserInfoStringFull(true, dirname);
+            string arguments = GetUserInfoString();
             arguments += " tlv \"" + filename + "\"";
 
             string token = FormatToken("timelapse", filename);
@@ -347,7 +376,7 @@ namespace NiftyPerforce
             if (string.IsNullOrEmpty(g_p4vc_exename))
                 return NotifyUser("could not find p4vc in perforce directory");
 
-            string arguments = GetUserInfoStringFull(true, dirname);
+            string arguments = GetUserInfoString();
             arguments += " revisiongraph \"" + filename + "\"";
 
             string token = FormatToken("revisiongraph", filename);
@@ -542,17 +571,16 @@ namespace NiftyPerforce
                 throw new Exception(string.Format("Tried to find the mainline version of {0}, but the mainline path spec is empty", filename));
             }
 
-            string result = Aurora.Process.Execute("p4.exe", Path.GetDirectoryName(filename), GetUserInfoString() + "integrated \"" + filename + "\"");
+            string result = Aurora.Process.Execute("p4.exe", Path.GetDirectoryName(filename), GetUserInfoString() + "integrated \"" + EscapeP4Path(filename) + "\"");
+            result = UnEscapeP4Path(result);
 
             var pattern = new Regex(@"//(.*)#\d+ - .*//([^#]+)#\d+", RegexOptions.Compiled);
 
-            string mainline_ = mainline.ToLowerInvariant();
-
             foreach (Match m in pattern.Matches(result))
             {
-                string candidate = "//" + m.Groups[2].ToString().ToLowerInvariant();
+                string candidate = "//" + m.Groups[2];
 
-                if (candidate.StartsWith(mainline_, StringComparison.Ordinal))
+                if (candidate.StartsWith(mainline, StringComparison.OrdinalIgnoreCase))
                     return candidate;
             }
 
